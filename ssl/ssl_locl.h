@@ -60,6 +60,7 @@
 # include <openssl/err.h>
 # include <openssl/ssl.h>
 # include <openssl/async.h>
+# include <openssl/cb.h>
 # include <openssl/symhacks.h>
 # include <openssl/ct.h>
 # include "record/record.h"
@@ -1138,6 +1139,7 @@ struct ssl_st {
     /* Async Job info */
     ASYNC_JOB *job;
     ASYNC_WAIT_CTX *waitctx;
+    CB_CTX *cbctx;
     CRYPTO_RWLOCK *lock;
 };
 

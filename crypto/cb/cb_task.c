@@ -6,19 +6,20 @@
 #include <unistd.h>
 
 #include "cb_locl.h"
+#include <openssl/cb.h>
 
 static pthread_t pt;
 static pthread_mutex_t lock = PTHREAD_MUTEX_INITIALIZER;
 static list_head task_head;
 
 static void* cb_task_func(void* dummy) {
-    cb_ctx    *cb;
-    task_data *task;
-    task_data *next_task;
-    cb_ctx    *ctx;
-    int       ret;
+    CB_CTX    *cb;
+    CB_TASK   *task;
+    CB_TASK   *next_task;
+    CB_CTX    *ctx;
     TASK_FUNC task_func;
     void      *data;
+    int       ret = 0;
 
     for(;;) {
 
@@ -28,7 +29,7 @@ static void* cb_task_func(void* dummy) {
             sleep(1);
             continue;
         }
-        cb = (cb_ctx*)(list_entry(&task_head));
+        cb = (CB_CTX*)(list_entry(&task_head));
         ctx = cb->ctx;
         task = cb->task;
 
@@ -36,7 +37,7 @@ static void* cb_task_func(void* dummy) {
         task_func = task->task_func;
 
         if( !list_is_empty(&task->list) ) {
-            next_task = (task_data*)task->list.next;
+            next_task = (CB_TASK*)task->list.next;
             cb->task = next_task;
             list_add_tail(&task_head, &cb->list);
         }
@@ -50,10 +51,10 @@ static void* cb_task_func(void* dummy) {
     return NULL;
 }
 
-int register_task(cb_ctx *ctx, void *data, TASK_FUNC task_func, int add_head) {
-    task_data *task;
+int register_task(CB_CTX *ctx, void *data, TASK_FUNC task_func, int add_head) {
+    CB_TASK *task;
 
-    task = (task_data *)malloc(sizeof(task_data));
+    task = (CB_TASK *)malloc(sizeof(CB_TASK));
     if( task == NULL ) {
         return -ENOMEM;
     }
