@@ -5,13 +5,17 @@
 extern "C" {
 # endif
 
-typedef int (*TASK_FUNC)(void* ctx, void* data);
+typedef int (*CB_TASK_FUNC)(void* ctx, void* data);
+typedef int (*CB_FORCE_FREE_FUNC)(void* data);
 
 typedef struct task_data_st CB_TASK;
 typedef struct cb_ctx_st CB_CTX;
 
-int register_task(struct cb_ctx_st *ctx, void *data, TASK_FUNC task_func, int add_head);
-int task_init(void);
+CB_CTX* CB_new(void* ctx);
+void CB_free(CB_CTX *cb);
+int CB_add_task(struct cb_ctx_st *ctx, void *data, CB_TASK_FUNC task_func,
+        CB_FORCE_FREE_FUNC force_free_func, int add_head);
+int CB_task_init(void);
 
 # ifdef  __cplusplus
 }

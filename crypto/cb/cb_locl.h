@@ -9,7 +9,7 @@ struct task_data_st {
     struct list_head_st list;
     void      *data;
     int (*task_func)(void* ctx, void* data);
-
+    void (*force_free_func)(void* data);
 };
 
 struct cb_ctx_st {

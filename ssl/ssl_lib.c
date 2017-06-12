@@ -661,6 +661,8 @@ SSL *SSL_new(SSL_CTX *ctx)
 
     s->job = NULL;
 
+    s->cbctx = CB_new(s);
+
 #ifndef OPENSSL_NO_CT
     if (!SSL_set_ct_validation_callback(s, ctx->ct_validation_callback,
                                         ctx->ct_validation_callback_arg))
@@ -1027,6 +1029,8 @@ void SSL_free(SSL *s)
     SSL_CTX_free(s->ctx);
 
     ASYNC_WAIT_CTX_free(s->waitctx);
+
+    CB_free(s->cbctx);
 
 #if !defined(OPENSSL_NO_NEXTPROTONEG)
     OPENSSL_free(s->next_proto_negotiated);
