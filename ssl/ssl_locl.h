@@ -1140,6 +1140,7 @@ struct ssl_st {
     ASYNC_JOB *job;
     ASYNC_WAIT_CTX *waitctx;
     CB_CTX *cbctx;
+    CB_WORK_CTX *workctx;
     CRYPTO_RWLOCK *lock;
 };
 

@@ -1530,8 +1530,26 @@ static int ssl_io_intern(void *vargs)
     return -1;
 }
 
+int test_work(void* ctx, void* data) {
+    SSL *s = ctx;
+    printf("test_work ctx:%p,data:%p\n",ctx,data);
+    free(data);
+    SSL_free(s);
+    return 0;
+}
+
+int test_task(void* ctx, void* data) {
+    SSL* s;
+
+    s = ctx;
+    printf("test_task_ctx:%p,data:%p\n",ctx,data);
+    CB_add_work(&s->cbctx->work,data,test_work,free,0);
+    return 0;
+}
+
 int SSL_read(SSL *s, void *buf, int num)
 {
+    void* data;
     if (s->handshake_func == NULL) {
         SSLerr(SSL_F_SSL_READ, SSL_R_UNINITIALIZED);
         return -1;
@@ -1541,6 +1559,11 @@ int SSL_read(SSL *s, void *buf, int num)
         s->rwstate = SSL_NOTHING;
         return (0);
     }
+
+    data = malloc(1);
+    printf("pre task ctx:%p,data:%p",s,data);
+    SSL_up_ref(s);
+    CB_add_task(&s->cbctx->task,data,test_task,free,0);
 
     if ((s->mode & SSL_MODE_ASYNC) && ASYNC_get_current_job() == NULL) {
         struct ssl_async_args args;

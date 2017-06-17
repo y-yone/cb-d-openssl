@@ -110,6 +110,172 @@ static int ssl3_record_app_data_waiting(SSL *s)
 #define MAX_EMPTY_RECORDS 32
 
 #define SSL2_RT_HEADER_LENGTH   2
+
+
+#if 0
+int enc_loop(){
+    SSL_decrypt();
+}
+
+int ssl3_delay_enc_task(SSL *s, void* data)
+{
+    int al;
+    int enc_err, i, ret = -1;
+    SSL3_RECORD *rr;
+    SSL3_BUFFER *rbuf;
+    SSL_SESSION *sess;
+    unsigned char md[EVP_MAX_MD_SIZE];
+    unsigned mac_size;
+    unsigned int num_recs = 0;
+    unsigned int j;
+
+    rr = RECORD_LAYER_get_rrec(&s->rlayer);
+    rbuf = RECORD_LAYER_get_rbuf(&s->rlayer);
+    sess = s->session;
+
+    enc_err = s->method->ssl3_enc->enc(s, rr, num_recs, 0);
+    /*-
+     * enc_err is:
+     *    0: (in non-constant time) if the record is publically invalid.
+     *    1: if the padding is valid
+     *    -1: if the padding is invalid
+     */
+    if (enc_err == 0) {
+        al = SSL_AD_DECRYPTION_FAILED;
+        SSLerr(SSL_F_SSL3_GET_RECORD, SSL_R_BLOCK_CIPHER_PAD_IS_WRONG);
+        goto f_err;
+    }
+#ifdef SSL_DEBUG
+    printf("dec %d\n", rr->length);
+    {
+        unsigned int z;
+        for (z = 0; z < rr->length; z++)
+            printf("%02X%c", rr->data[z], ((z + 1) % 16) ? ' ' : '\n');
+    }
+    printf("\n");
+#endif
+
+    /* r->length is now the compressed data plus mac */
+    if ((sess != NULL) &&
+        (s->enc_read_ctx != NULL) &&
+        (!SSL_READ_ETM(s) && EVP_MD_CTX_md(s->read_hash) != NULL)) {
+        /* s->read_hash != NULL => mac_size != -1 */
+        unsigned char *mac = NULL;
+        unsigned char mac_tmp[EVP_MAX_MD_SIZE];
+
+        mac_size = EVP_MD_CTX_size(s->read_hash);
+        OPENSSL_assert(mac_size <= EVP_MAX_MD_SIZE);
+
+        for (j = 0; j < num_recs; j++) {
+            /*
+             * orig_len is the length of the record before any padding was
+             * removed. This is public information, as is the MAC in use,
+             * therefore we can safely process the record in a different amount
+             * of time if it's too short to possibly contain a MAC.
+             */
+            if (rr[j].orig_len < mac_size ||
+                /* CBC records must have a padding length byte too. */
+                (EVP_CIPHER_CTX_mode(s->enc_read_ctx) == EVP_CIPH_CBC_MODE &&
+                 rr[j].orig_len < mac_size + 1)) {
+                al = SSL_AD_DECODE_ERROR;
+                SSLerr(SSL_F_SSL3_GET_RECORD, SSL_R_LENGTH_TOO_SHORT);
+                goto f_err;
+            }
+
+            if (EVP_CIPHER_CTX_mode(s->enc_read_ctx) == EVP_CIPH_CBC_MODE) {
+                /*
+                 * We update the length so that the TLS header bytes can be
+                 * constructed correctly but we need to extract the MAC in
+                 * constant time from within the record, without leaking the
+                 * contents of the padding bytes.
+                 */
+                mac = mac_tmp;
+                ssl3_cbc_copy_mac(mac_tmp, &rr[j], mac_size);
+                rr[j].length -= mac_size;
+            } else {
+                /*
+                 * In this case there's no padding, so |rec->orig_len| equals
+                 * |rec->length| and we checked that there's enough bytes for
+                 * |mac_size| above.
+                 */
+                rr[j].length -= mac_size;
+                mac = &rr[j].data[rr[j].length];
+            }
+
+            i = s->method->ssl3_enc->mac(s, &rr[j], md, 0 /* not send */ );
+            if (i < 0 || mac == NULL
+                || CRYPTO_memcmp(md, mac, (size_t)mac_size) != 0)
+                enc_err = -1;
+            if (rr->length > SSL3_RT_MAX_COMPRESSED_LENGTH + mac_size)
+                enc_err = -1;
+        }
+    }
+
+    if (enc_err < 0) {
+        /*
+         * A separate 'decryption_failed' alert was introduced with TLS 1.0,
+         * SSL 3.0 only has 'bad_record_mac'.  But unless a decryption
+         * failure is directly visible from the ciphertext anyway, we should
+         * not reveal which kind of error occurred -- this might become
+         * visible to an attacker (e.g. via a logfile)
+         */
+        al = SSL_AD_BAD_RECORD_MAC;
+        SSLerr(SSL_F_SSL3_GET_RECORD,
+               SSL_R_DECRYPTION_FAILED_OR_BAD_RECORD_MAC);
+        goto f_err;
+    }
+
+    for (j = 0; j < num_recs; j++) {
+        /* rr[j].length is now just compressed */
+        if (s->expand != NULL) {
+            if (rr[j].length > SSL3_RT_MAX_COMPRESSED_LENGTH) {
+                al = SSL_AD_RECORD_OVERFLOW;
+                SSLerr(SSL_F_SSL3_GET_RECORD, SSL_R_COMPRESSED_LENGTH_TOO_LONG);
+                goto f_err;
+            }
+            if (!ssl3_do_uncompress(s, &rr[j])) {
+                al = SSL_AD_DECOMPRESSION_FAILURE;
+                SSLerr(SSL_F_SSL3_GET_RECORD, SSL_R_BAD_DECOMPRESSION);
+                goto f_err;
+            }
+        }
+
+        if (rr[j].length > SSL3_RT_MAX_PLAIN_LENGTH) {
+            al = SSL_AD_RECORD_OVERFLOW;
+            SSLerr(SSL_F_SSL3_GET_RECORD, SSL_R_DATA_LENGTH_TOO_LONG);
+            goto f_err;
+        }
+
+        rr[j].off = 0;
+        /*-
+         * So at this point the following is true
+         * rr[j].type   is the type of record
+         * rr[j].length == number of bytes in record
+         * rr[j].off    == offset to first valid byte
+         * rr[j].data   == where to take bytes from, increment after use :-).
+         */
+
+        /* just read a 0 length packet */
+        if (rr[j].length == 0) {
+            RECORD_LAYER_inc_empty_record_count(&s->rlayer);
+            if (RECORD_LAYER_get_empty_record_count(&s->rlayer)
+                > MAX_EMPTY_RECORDS) {
+                al = SSL_AD_UNEXPECTED_MESSAGE;
+                SSLerr(SSL_F_SSL3_GET_RECORD, SSL_R_RECORD_TOO_SMALL);
+                goto f_err;
+            }
+        } else {
+            RECORD_LAYER_reset_empty_record_count(&s->rlayer);
+        }
+    }
+
+    RECORD_LAYER_set_numrpipes(&s->rlayer, num_recs);
+
+    CB_add_task(s, loop_task, NULL, NULL);
+    return 1;
+}
+#endif
+
 /*-
  * Call this to get new input records.
  * It will return <= 0 if more data is needed, normally due to an error
@@ -127,6 +293,7 @@ int ssl3_get_record(SSL *s)
 {
     int ssl_major, ssl_minor, al;
     int enc_err, n, i, ret = -1;
+    //int n, i, ret = -1;
     SSL3_RECORD *rr;
     SSL3_BUFFER *rbuf;
     SSL_SESSION *sess;
